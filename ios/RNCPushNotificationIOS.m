@@ -211,6 +211,7 @@ static NSString *RCTGetManifestFilePath()
 }
 
 static void _addHistoryToFileStorage(NSDictionary *history) {
+    if (!history) return;
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *directoryPath = RCTGetStorageDirectory();
     BOOL isDir;
