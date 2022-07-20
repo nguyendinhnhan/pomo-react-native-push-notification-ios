@@ -311,9 +311,12 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
         NSMutableDictionary *userInfo = [response.notification.request.content.userInfo mutableCopy];
         NSMutableDictionary *details = [detailsFromUserDefaults ? detailsFromUserDefaults : [userInfo objectForKey:@"details"] mutableCopy];
 
-        NSString *status = [details objectForKey:@"status"];
+        NSTimeInterval nowInMillis = [[NSDate date] timeIntervalSince1970] * 1000; // NSTimeInterval is double
+        NSNumber *currentFireDate = [details objectForKey:@"fireDate"];
         BOOL isFocus = [response.actionIdentifier isEqualToString:focusActionId];
-        if ((isFocus && ![status isEqualToString:statusFocusing]) || (!isFocus && ![status isEqualToString:statusRelaxing])) {
+
+        // if don't have any pending notification
+        if (!currentFireDate || (currentFireDate && currentFireDate.doubleValue <= nowInMillis)) {
             NSDictionary *history = [details objectForKey:@"history"];
             NSDictionary *pomo = [details objectForKey:@"pomo"];
             UNMutableNotificationContent *content = [response.notification.request.content mutableCopy];
@@ -326,7 +329,6 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
             NSNumber *focusTime = [pomo objectForKey:@"focusTime"];
             NSNumber *breakTime = [pomo objectForKey:isLongBreak ? @"longBreakTime" : @"shortBreakTime"];
             double timeInSeconds = [isFocus ? focusTime : breakTime doubleValue] * 60;
-            NSTimeInterval nowInMillis = [[NSDate date] timeIntervalSince1970] * 1000; // NSTimeInterval is double
             NSNumber *startedAt = [NSNumber numberWithDouble:nowInMillis];
             NSNumber *fireDate = [NSNumber numberWithDouble:nowInMillis + timeInSeconds * 1000];
 
@@ -336,7 +338,7 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
             NSDictionary *newHistory = [[NSDictionary alloc] initWithObjectsAndKeys:[pomo objectForKey:@"name"],@"name", [pomo objectForKey:@"color"],@"color", isFocus ? typeFocus : typeRelax,@"type", startedAt,@"startedAt", fireDate,@"finishedAt",nil];
             [details setValue:newHistory forKey:@"history"];
             if (isFocus) {
-                [details setValue:[NSNumber numberWithInt:isLongBreak ? 1 : [currentIndex intValue] + 1] forKey:@"currentIndex"];
+                [details setValue:[NSNumber numberWithInt:isLongBreak ? 1 : currentIndex.intValue + 1] forKey:@"currentIndex"];
             }
             
             // 2. add Notification
@@ -344,12 +346,10 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
             content.userInfo = userInfo;
             NSString *unit = [isFocus ? breakTime : focusTime isEqualToNumber:[NSNumber numberWithDouble:1]] ? @"min" : @"mins";
             if (isFocus) {
-                NSLog(@"start focus will show BREAK Notification");
                 content.categoryIdentifier = finishFocusId;
                 content.title = isLongBreak ? longBreakTitle : shortBreakTitle;
                 content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? longBreakBody : shortBreakBody, nextBreakMessage, breakTime, unit];
             } else {
-                NSLog(@"start relax will show REFOCUS Notification");
                 content.categoryIdentifier = isLongBreak ? finishLongBreakId : finishShortBreakId;
                 content.title = isLongBreak ? focusAfterLongBreakTitle : focusAfterShortBreakTitle;
                 content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? focusAfterLongBreakBody : focusAfterShortBreakBody, nextPomoMessage, focusTime, unit];
@@ -364,7 +364,6 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
                     // 3. store details, history
                     _setDetailsToUserDefaults(details);
                     _addHistoryToFileStorage(history);
-                    NSLog(@"stored history, newDetails");
                     }
                 }
             ];
