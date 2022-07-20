@@ -121,6 +121,40 @@ class PushNotificationIOS {
     UNAuthorizationStatusProvisional: 3,
   };
 
+  /* begin Custom Notification by Nyan */
+  static loadDetailsFromUserDefaults(callback: Function) {
+    invariant(
+      RNCPushNotificationIOS,
+      'PushNotificationManager is not available.',
+    );
+    RNCPushNotificationIOS.loadDetailsFromUserDefaults(callback);
+  }
+
+  static storeDetailsToUserDefaults(details: Object) {
+    invariant(
+      RNCPushNotificationIOS,
+      'PushNotificationManager is not available.',
+    );
+    RNCPushNotificationIOS.storeDetailsToUserDefaults(details);
+  }
+
+  static loadHistoriesFromFileStorage(callback: Function) {
+    invariant(
+      RNCPushNotificationIOS,
+      'PushNotificationManager is not available.',
+    );
+    RNCPushNotificationIOS.loadHistoriesFromFileStorage(callback);
+  }
+
+  static removeHistoriesInFileStorage() {
+    invariant(
+      RNCPushNotificationIOS,
+      'PushNotificationManager is not available.',
+    );
+    RNCPushNotificationIOS.removeHistoriesInFileStorage();
+  }
+  /* end Custom Notification by Nyan */
+
   /**
    * Schedules the localNotification for immediate presentation.
    * @deprecated use `addNotificationRequest` instead

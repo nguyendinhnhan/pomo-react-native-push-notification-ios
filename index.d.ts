@@ -338,6 +338,17 @@ export interface PushNotificationIOSStatic {
    * For a list of possible values, see `PushNotificationIOS.AuthorizationStatus`.
    */
   AuthorizationStatus: AuthorizationStatus;
+
+  /* begin Custom Notification by Nyan */
+  loadDetailsFromUserDefaults(callback: (newDetails: any) => void): void;
+
+  storeDetailsToUserDefaults(callback: (details: any) => void): void;
+
+  loadHistoriesFromFileStorage(callback: (histories: any) => void): void;
+
+  removeHistoriesInFileStorage(): void;
+  /* end Custom Notification by Nyan */
+
   /**
    * @deprecated use `addNotificationRequest`
    * Schedules the localNotification for immediate presentation.

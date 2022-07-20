@@ -123,6 +123,7 @@ RCT_EXPORT_MODULE()
 
 + (void)didReceiveNotificationResponse:(UNNotificationResponse *)response
 API_AVAILABLE(ios(10.0)) {
+    _handleNotificationResponseReceived(response); // Custom Notification by Nyan
     [[NSNotificationCenter defaultCenter] postNotificationName:kLocalNotificationReceived
                                                       object:self
                                                     userInfo:[RCTConvert RCTFormatUNNotificationResponse:response]];
@@ -166,6 +167,239 @@ API_AVAILABLE(ios(10.0)) {
   };
   [self sendEventWithName:@"remoteNotificationRegistrationError" body:errorDetails];
 }
+
+#pragma mark - Custom Notification by Nyan
+/* begin History in File Storage */
+// https://github.com/react-native-async-storage/async-storage/blob/master/ios/RNCAsyncStorage.m#L129
+static NSString *const RCTStorageDirectory = @"RCTStorageDirectory_v1";
+static NSString *const RCTManifestFileName = @"manifest.json";
+static NSString *const historiesKey = @"histories";
+
+static NSString *RCTCreateStorageDirectoryPath(NSString *storageDir)
+{
+    NSString *storageDirectoryPath = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
+    // We should use the "Application Support/[bundleID]" folder for persistent data storage that's hidden from users
+    storageDirectoryPath = [storageDirectoryPath stringByAppendingPathComponent:[[NSBundle mainBundle] bundleIdentifier]];
+    // Per Apple's docs, all app content in Application Support must be within a subdirectory of the app's bundle identifier
+    storageDirectoryPath = [storageDirectoryPath stringByAppendingPathComponent:storageDir];
+    return storageDirectoryPath;
+}
+
+static NSString *RCTGetStorageDirectory()
+{
+    static NSString *storageDirectory = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+      storageDirectory = RCTCreateStorageDirectoryPath(RCTStorageDirectory);
+    });
+    return storageDirectory;
+}
+
+static NSString *RCTCreateManifestFilePath(NSString *storageDirectory)
+{
+    return [storageDirectory stringByAppendingPathComponent:RCTManifestFileName];
+}
+
+static NSString *RCTGetManifestFilePath()
+{
+    static NSString *manifestFilePath = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+      manifestFilePath = RCTCreateManifestFilePath(RCTStorageDirectory);
+    });
+    return manifestFilePath;
+}
+
+static void _addHistoryToFileStorage(NSDictionary *history) {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *directoryPath = RCTGetStorageDirectory();
+    BOOL isDir;
+    BOOL storageDirectoryExists = [fileManager fileExistsAtPath:directoryPath isDirectory:&isDir] && isDir;
+    if (!storageDirectoryExists) {
+        NSError *_error;
+        [fileManager createDirectoryAtPath:directoryPath withIntermediateDirectories:YES attributes:nil error:&_error];
+        if (_error) {
+            NSLog(@"Failed to create storage directory %@", _error);
+            return;
+        }
+        NSLog(@"---Create folder success");
+    }
+    
+    NSArray *historiesFromFile = _getHistoriesFromFileStorage();
+    NSMutableArray *histories = [[NSMutableArray alloc]init];
+    if (historiesFromFile) {
+        histories = [historiesFromFile mutableCopy];
+    }
+    [histories addObject:history];
+    NSDictionary *object = [NSDictionary dictionaryWithObject:histories forKey:historiesKey];
+
+    NSError *error;
+    NSString *filePath = RCTCreateStorageDirectoryPath(RCTGetManifestFilePath());
+    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:object];
+    [data writeToFile:filePath options:NSDataWritingAtomic error:&error];
+    if (error) {
+        NSLog(@"Fail to add history %@", error);
+        return;
+    }
+}
+
+static inline NSArray* _getHistoriesFromFileStorage() {
+    NSString *filePath = RCTCreateStorageDirectoryPath(RCTGetManifestFilePath());
+    if ([[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+        NSData *archivedData = [NSData dataWithContentsOfFile:filePath];
+        NSDictionary *object = (NSDictionary*) [NSKeyedUnarchiver unarchiveObjectWithData:archivedData];
+        NSArray *histories = (NSArray*) [object objectForKey:historiesKey];
+        return histories;
+    }
+    return nil;
+}
+
+static void _removeStorageDirectory()
+{
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *directoryPath = RCTGetStorageDirectory();
+    BOOL isDir;
+    BOOL storageDirectoryExists = [fileManager fileExistsAtPath:directoryPath isDirectory:&isDir] && isDir;
+    if (storageDirectoryExists) {
+        NSError *error;
+        [fileManager removeItemAtPath:directoryPath error:&error];
+        if (error) {
+            NSLog(@"Failed to delete storage directory %@", error);
+        }
+    }
+}
+
+RCT_EXPORT_METHOD(loadHistoriesFromFileStorage:(RCTResponseSenderBlock)callback)
+{
+    NSArray *histories = _getHistoriesFromFileStorage();
+    callback(@[RCTNullIfNil(histories)]);
+}
+
+RCT_EXPORT_METHOD(removeHistoriesInFileStorage)
+{
+    _removeStorageDirectory();
+}
+/* end History in File Storage */
+
+/* begin Notification actions & Details in User Defaults */
+static NSString *const detailsDataKey = @"detailsData"; // only ios
+static NSString *const focusActionId = @"id-action-focus"; // NotificationActionId.Focus
+static NSString *const relaxActionId = @"id-action-relax"; // NotificationActionId.Relax
+static NSString *const finishFocusId = @"id-notification-finish-focus"; // NotificationId.FinishFocus
+static NSString *const finishShortBreakId = @"id-notification-finish-short-break"; // NotificationId.FinishShortBreak
+static NSString *const finishLongBreakId = @"id-notification-finish-long-break"; // NotificationId.FinishLongBreak
+static NSString *const statusFocusing = @"focusing"; // PomoStatus.Focusing
+static NSString *const statusRelaxing = @"relaxing"; // PomoStatus.Relaxing
+static NSString *const typeFocus = @"focus"; // PomoType.Focus
+static NSString *const typeRelax = @"relax"; // PomoType.Relax
+
+static NSString *const shortBreakTitle = @"SHORT BREAK";
+static NSString *const shortBreakBody =@"Just relax, back to work after a cup of TEA! ☕";
+static NSString *const longBreakTitle = @"LONG BREAK";
+static NSString *const longBreakBody = @"Good job! Let's treat yourself a LONG RELAX! 😉";
+static NSString *const focusAfterShortBreakTitle = @"TIME TO REFOCUS";
+static NSString *const focusAfterShortBreakBody = @"You're invincible today! 👑";
+static NSString *const focusAfterLongBreakTitle = @"KEEP IT GOING";
+static NSString *const focusAfterLongBreakBody = @"Keep the spirit going!!! Let's start new a pomo! 🤓";
+static NSString *const nextBreakMessage = @"Your next break is";
+static NSString *const nextPomoMessage = @"Your next pomo is";
+
+static void _handleNotificationResponseReceived(UNNotificationResponse *response) {
+    if ([response.actionIdentifier isEqualToString:focusActionId] || [response.actionIdentifier isEqualToString:relaxActionId]) {
+        NSDictionary *detailsFromUserDefaults = _getDetailsFromUserDefaults();
+        NSMutableDictionary *userInfo = [response.notification.request.content.userInfo mutableCopy];
+        NSMutableDictionary *details = [detailsFromUserDefaults ? detailsFromUserDefaults : [userInfo objectForKey:@"details"] mutableCopy];
+
+        NSString *status = [details objectForKey:@"status"];
+        BOOL isFocus = [response.actionIdentifier isEqualToString:focusActionId];
+        if ((isFocus && ![status isEqualToString:statusFocusing]) || (!isFocus && ![status isEqualToString:statusRelaxing])) {
+            NSDictionary *history = [details objectForKey:@"history"];
+            NSDictionary *pomo = [details objectForKey:@"pomo"];
+            UNMutableNotificationContent *content = [response.notification.request.content mutableCopy];
+
+            // 1. update details
+            NSNumber *numOfSet = [pomo objectForKey:@"numOfSet"];
+            NSNumber *currentIndex = [details objectForKey:@"currentIndex"];
+            BOOL isLongBreak = numOfSet.intValue == currentIndex.intValue;
+
+            NSNumber *focusTime = [pomo objectForKey:@"focusTime"];
+            NSNumber *breakTime = [pomo objectForKey:isLongBreak ? @"longBreakTime" : @"shortBreakTime"];
+            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+            double time = [isFocus ? focusTime : breakTime doubleValue] * 60;
+            NSNumber *startedAt = [NSNumber numberWithDouble:now];
+            NSNumber *fireDate = [NSNumber numberWithDouble:now + time];
+
+            [details setValue:isFocus ? statusFocusing : statusRelaxing forKey:@"status"];
+            [details setValue:startedAt forKey:@"startedAt"];
+            [details setValue:fireDate forKey:@"fireDate"];
+            NSString *historyId = [startedAt stringValue];
+            NSDictionary *newHistory = [[NSDictionary alloc] initWithObjectsAndKeys:
+                                     historyId,@"id", [pomo objectForKey:@"name"],@"name", [pomo objectForKey:@"color"],@"color", isFocus ? typeFocus : typeRelax,@"type", startedAt,@"startedAt", fireDate,@"fireDate",nil];
+            [details setValue:newHistory forKey:@"history"];
+            if (isFocus) {
+                [details setValue:[NSNumber numberWithInt:isLongBreak ? 1 : [currentIndex intValue] + 1] forKey:@"currentIndex"];
+            }
+            
+            // 2. add Notification
+            [userInfo setValue:details forKey:@"details"];
+            content.userInfo = userInfo;
+            NSString *unit = [isFocus ? breakTime : focusTime isEqualToNumber:[NSNumber numberWithDouble:1]] ? @"min" : @"mins";
+            if (isFocus) {
+                NSLog(@"start focus will show BREAK Notification");
+                content.categoryIdentifier = finishFocusId;
+                content.title = isLongBreak ? longBreakTitle : shortBreakTitle;
+                content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? longBreakBody : shortBreakBody, nextBreakMessage, breakTime, unit];
+            } else {
+                NSLog(@"start relax will show REFOCUS Notification");
+                content.categoryIdentifier = isLongBreak ? finishLongBreakId : finishShortBreakId;
+                content.title = isLongBreak ? focusAfterLongBreakTitle : focusAfterShortBreakTitle;
+                content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? focusAfterLongBreakBody : focusAfterShortBreakBody, nextPomoMessage, focusTime, unit];
+            }
+            
+            UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:time repeats:FALSE];
+            UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:content.categoryIdentifier content:content trigger:trigger];
+            UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+            [center addNotificationRequest:request
+                     withCompletionHandler:^(NSError* _Nullable error) {
+                if (!error) {
+                    // 3. store details, history
+                    _setDetailsToUserDefaults(details);
+                    _addHistoryToFileStorage(history);
+                    NSLog(@"stored history, newDetails");
+                    }
+                }
+            ];
+        }
+    }
+}
+
+RCT_EXPORT_METHOD(loadDetailsFromUserDefaults:(RCTResponseSenderBlock)callback)
+{
+    _getHistoriesFromFileStorage();
+    NSDictionary *details = _getDetailsFromUserDefaults();
+    callback(@[RCTNullIfNil(details)]);
+}
+
+RCT_EXPORT_METHOD(storeDetailsToUserDefaults:(NSDictionary *)details)
+{
+    _setDetailsToUserDefaults(details);
+}
+
+static inline NSDictionary* _getDetailsFromUserDefaults() {
+    NSData *archivedData = [[NSUserDefaults standardUserDefaults]
+        dataForKey:detailsDataKey];
+    NSDictionary *details = (NSDictionary*) [NSKeyedUnarchiver unarchiveObjectWithData:archivedData];
+    return details;
+}
+
+static inline void _setDetailsToUserDefaults(NSDictionary *details)
+{
+    NSData *archivedData = [NSKeyedArchiver archivedDataWithRootObject:details];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setObject:archivedData forKey:detailsDataKey];
+    [defaults synchronize];
+}
+/* end Notification actions & Details in User Defaults */
 
 RCT_EXPORT_METHOD(onFinishRemoteNotification:(NSString *)notificationId fetchResult:(UIBackgroundFetchResult)result)
 {
