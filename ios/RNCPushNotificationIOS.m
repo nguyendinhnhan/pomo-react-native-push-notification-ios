@@ -325,17 +325,15 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
 
             NSNumber *focusTime = [pomo objectForKey:@"focusTime"];
             NSNumber *breakTime = [pomo objectForKey:isLongBreak ? @"longBreakTime" : @"shortBreakTime"];
-            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-            double time = [isFocus ? focusTime : breakTime doubleValue] * 60;
-            NSNumber *startedAt = [NSNumber numberWithDouble:now];
-            NSNumber *fireDate = [NSNumber numberWithDouble:now + time];
+            double timeInSeconds = [isFocus ? focusTime : breakTime doubleValue] * 60;
+            NSTimeInterval nowInMillis = [[NSDate date] timeIntervalSince1970] * 1000; // NSTimeInterval is double
+            NSNumber *startedAt = [NSNumber numberWithDouble:nowInMillis];
+            NSNumber *fireDate = [NSNumber numberWithDouble:nowInMillis + timeInSeconds * 1000];
 
             [details setValue:isFocus ? statusFocusing : statusRelaxing forKey:@"status"];
             [details setValue:startedAt forKey:@"startedAt"];
             [details setValue:fireDate forKey:@"fireDate"];
-            NSString *historyId = [startedAt stringValue];
-            NSDictionary *newHistory = [[NSDictionary alloc] initWithObjectsAndKeys:
-                                     historyId,@"id", [pomo objectForKey:@"name"],@"name", [pomo objectForKey:@"color"],@"color", isFocus ? typeFocus : typeRelax,@"type", startedAt,@"startedAt", fireDate,@"fireDate",nil];
+            NSDictionary *newHistory = [[NSDictionary alloc] initWithObjectsAndKeys:[pomo objectForKey:@"name"],@"name", [pomo objectForKey:@"color"],@"color", isFocus ? typeFocus : typeRelax,@"type", startedAt,@"startedAt", fireDate,@"finishedAt",nil];
             [details setValue:newHistory forKey:@"history"];
             if (isFocus) {
                 [details setValue:[NSNumber numberWithInt:isLongBreak ? 1 : [currentIndex intValue] + 1] forKey:@"currentIndex"];
@@ -357,7 +355,7 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
                 content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? focusAfterLongBreakBody : focusAfterShortBreakBody, nextPomoMessage, focusTime, unit];
             }
             
-            UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:time repeats:FALSE];
+            UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:timeInSeconds repeats:FALSE];
             UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:content.categoryIdentifier content:content trigger:trigger];
             UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
             [center addNotificationRequest:request
