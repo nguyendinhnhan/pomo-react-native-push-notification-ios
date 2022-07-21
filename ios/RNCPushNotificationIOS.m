@@ -283,6 +283,13 @@ RCT_EXPORT_METHOD(removeHistoriesInFileStorage)
 /* end History in File Storage */
 
 /* begin Notification actions & Details in User Defaults */
+/**
+ * FinishFocus, Finish Relax (no skip press) are auto run in background
+ * Bug: press "Take a break" notification action (FinishFocus + StartRelax by native code) then open app still run FinishFocus again --> wrong flow
+ * Solution: hasClickedNotificationAction = TRUE will prevent JS change details in User defaults until open app
+ */
+static BOOL hasClickedNotificationAction = NO;
+
 static NSString *const detailsDataKey = @"detailsData"; // only ios
 static NSString *const focusActionId = @"id-action-focus"; // NotificationActionId.Focus
 static NSString *const relaxActionId = @"id-action-relax"; // NotificationActionId.Relax
@@ -317,11 +324,11 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
 
         // if don't have any pending notification
         if (!currentFireDate || (currentFireDate && currentFireDate.doubleValue <= nowInMillis)) {
-            NSDictionary *history = [details objectForKey:@"history"];
-            NSDictionary *pomo = [details objectForKey:@"pomo"];
-            UNMutableNotificationContent *content = [response.notification.request.content mutableCopy];
+            hasClickedNotificationAction = YES;
 
             // 1. update details
+            NSDictionary *history = [details objectForKey:@"history"];
+            NSDictionary *pomo = [details objectForKey:@"pomo"];
             NSNumber *numOfSet = [pomo objectForKey:@"numOfSet"];
             NSNumber *currentIndex = [details objectForKey:@"currentIndex"];
             BOOL isLongBreak = numOfSet.intValue == currentIndex.intValue;
@@ -337,24 +344,30 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
             [details setValue:fireDate forKey:@"fireDate"];
             NSDictionary *newHistory = [[NSDictionary alloc] initWithObjectsAndKeys:[pomo objectForKey:@"name"],@"name", [pomo objectForKey:@"color"],@"color", isFocus ? typeFocus : typeRelax,@"type", startedAt,@"startedAt", fireDate,@"finishedAt",nil];
             [details setValue:newHistory forKey:@"history"];
-            if (isFocus) {
-                [details setValue:[NSNumber numberWithInt:isLongBreak ? 1 : currentIndex.intValue + 1] forKey:@"currentIndex"];
-            }
-            
+
             // 2. add Notification
-            [userInfo setValue:details forKey:@"details"];
-            content.userInfo = userInfo;
+            UNMutableNotificationContent *content = [response.notification.request.content mutableCopy];
             NSString *unit = [isFocus ? breakTime : focusTime isEqualToNumber:[NSNumber numberWithDouble:1]] ? @"min" : @"mins";
             if (isFocus) {
+                // Finish Relax need to update currentIndex
+                int nextIndex = isLongBreak ? 1 : currentIndex.intValue + 1;
+                [details setValue:[NSNumber numberWithInt:nextIndex] forKey:@"currentIndex"];
+                BOOL isFinishLongBreak = numOfSet.intValue == nextIndex;
+
+                // Finish Focus's Notification
                 content.categoryIdentifier = finishFocusId;
-                content.title = isLongBreak ? longBreakTitle : shortBreakTitle;
-                content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? longBreakBody : shortBreakBody, nextBreakMessage, breakTime, unit];
+                content.title = isFinishLongBreak ? longBreakTitle : shortBreakTitle;
+                content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isFinishLongBreak ? longBreakBody : shortBreakBody, nextBreakMessage, breakTime, unit];
             } else {
+                // Finish Relax's Notification
                 content.categoryIdentifier = isLongBreak ? finishLongBreakId : finishShortBreakId;
                 content.title = isLongBreak ? focusAfterLongBreakTitle : focusAfterShortBreakTitle;
                 content.body = [NSString stringWithFormat:@"%@\r\r%@ %@ %@", isLongBreak ? focusAfterLongBreakBody : focusAfterShortBreakBody, nextPomoMessage, focusTime, unit];
             }
-            
+
+            [userInfo setValue:details forKey:@"details"];
+            content.userInfo = userInfo;
+
             UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:timeInSeconds repeats:FALSE];
             UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:content.categoryIdentifier content:content trigger:trigger];
             UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
@@ -373,6 +386,7 @@ static void _handleNotificationResponseReceived(UNNotificationResponse *response
 
 RCT_EXPORT_METHOD(loadDetailsFromUserDefaults:(RCTResponseSenderBlock)callback)
 {
+    hasClickedNotificationAction = NO;
     _getHistoriesFromFileStorage();
     NSDictionary *details = _getDetailsFromUserDefaults();
     callback(@[RCTNullIfNil(details)]);
@@ -380,7 +394,9 @@ RCT_EXPORT_METHOD(loadDetailsFromUserDefaults:(RCTResponseSenderBlock)callback)
 
 RCT_EXPORT_METHOD(storeDetailsToUserDefaults:(NSDictionary *)details)
 {
-    _setDetailsToUserDefaults(details);
+    if (!hasClickedNotificationAction) {
+        _setDetailsToUserDefaults(details);
+    }
 }
 
 static inline NSDictionary* _getDetailsFromUserDefaults() {
